@@ -1,10 +1,10 @@
 # Setting up Pi-hole in Docker on diskless Alpine Linux on a Raspberry Pi
 
-My SD card is 16GB.
+My SD card is 32GB.
 I chose to partition it with
 
-- 192 MiB (FAT32) for the operating system,
-- 1 GiB (ext4) for the local backup utility and package cache, and
+- 256 MiB (FAT32) for the operating system,
+- 2 GiB (ext4) for the local backup utility and package cache, and
 - the remainder (ext4) for `/var/lib/docker`.
 
 ## Prepare the SD card (on macOS)
@@ -15,14 +15,14 @@ Find the device name with
 $ diskutil list
 ```
 
-In my case, the SD card was `/dev/disk2`.
+In my case, the SD card was `/dev/disk4`.
 
 Partition the SD card with
 
 ```console
-$ diskutil partitionDisk /dev/disk2 \
+$ diskutil partitionDisk /dev/disk4 \
   MBR \
-  FAT32 PI-HOLE 192MiB \
+  FAT32 PI-HOLE 256MiB \
   FREE %noformat% R
 ```
 
@@ -34,16 +34,16 @@ gpg: key 293ACD0907D9495A: public key "Natanael Copa <ncopa@alpinelinux.org>" im
 
 $ gpg --lsign-key 293ACD0907D9495A
 
-$ curl --remote-name-all https://dl-cdn.alpinelinux.org/alpine/v3.13/releases/aarch64/alpine-rpi-3.13.1-aarch64.tar.gz{.asc,}
+$ curl --remote-name-all https://dl-cdn.alpinelinux.org/alpine/v3.20/releases/aarch64/alpine-rpi-3.20.0-aarch64.tar.gz{.asc,}
 
-$ gpg --verify alpine-rpi-3.13.1-aarch64.tar.gz{.asc,}
-gpg: Signature made Thu 11 Feb 15:16:57 2021 GMT
+$ gpg --verify alpine-rpi-3.20.0-aarch64.tar.gz{.asc,}
+gpg: Signature made Wed 22 May 11:33:03 2024 BST
 gpg:                using RSA key 0482D84022F52DF1C4E7CD43293ACD0907D9495A
 gpg: Good signature from "Natanael Copa <ncopa@alpinelinux.org>" [full]
 
 $ tar \
   --extract \
-  --file alpine-rpi-3.13.1-aarch64.tar.gz \
+  --file alpine-rpi-3.20.0-aarch64.tar.gz \
   --directory /Volumes/PI-HOLE
 ```
 
@@ -55,20 +55,18 @@ $ diskutil eject /Volumes/PI-HOLE
 
 ## Generate an SSH key
 
-Generate an SSH key with
+Generate an SSH key in 1password with
 
 ```console
-$ ssh-keygen -C "" -f ~/.ssh/pihole -t ed25519
+$ op item create --category ssh --title pihole
 ```
 
 Upload the public key as a gist with
 
 ```console
-$ hub gist create --public ~/.ssh/pihole.pub |
-  xargs curl --output /dev/null --silent --show-error --write-out "%{redirect_url}/raw" |
-  curl --form url="<-" --include --silent --show-error https://git.io |
-  awk '$1 == "Location:" { print $2 }'
-https://git.io/...
+$ op read "op://personal/pihole/public key" |
+  gh gist create --filename pihole.pub -
+https://gist.githubusercontent.com/...
 ```
 
 Take a note of the URL for later.
@@ -87,12 +85,12 @@ Set up Alpine in diskless mode with
 | Setting | Value | Notes |
 |---|---|---|
 | Keyboard layout | `gb` |
-| Keyboard layout variant | `gb-mac` | I was using an Apple Magic Keyboard |
+| Keyboard layout variant | `gb` |
 | System hostname | `pihole` |
 | Network interface | `eth0` |
-| IP address | `10.134.1.53` | This depends on the router's LAN settings |
+| IP address | `192.168.0.2` | This depends on the router's LAN settings |
 | Netmask | `255.255.255.0` |
-| Gateway | `10.134.1.1` |
+| Gateway | `192.168.0.1` |
 | Manual network configuration | `n` |
 | DNS domain name | (empty) |
 | DNS nameservers | `1.1.1.1 1.0.0.1` |
@@ -100,6 +98,7 @@ Set up Alpine in diskless mode with
 | HTTP/FTP proxy URL | `none` |
 | NTP client | `chrony` |
 | Mirror | `uk.alpinelinux.org` |
+| Setup a user? | `pihole` |
 | SSH server | `openssh` |
 | Unmount `/media/mmcblk0p1`? | `n` |
 | Where to store configs | `none` |
@@ -111,12 +110,14 @@ Install certificate authority certificates with
 # apk add ca-certificates
 ```
 
-Enable the `community` repository and configure the mirror with HTTPS in `/etc/apk/repositories`:
+Enable the `community` repository and configure the mirror with HTTPS by running
 
 ```
+# cat >/etc/apk/repositories <<EOF
 /media/mmcblk0p1/apks
-https://uk.alpinelinux.org/alpine/v3.13/main
-https://uk.alpinelinux.org/alpine/v3.13/community
+https://uk.alpinelinux.org/alpine/v3.20/main
+https://uk.alpinelinux.org/alpine/v3.20/community
+EOF
 ```
 
 Upgrade any outdated packages with
@@ -132,11 +133,11 @@ Finish partitioning the SD card with
 ```console
 # apk add e2fsprogs parted
 
-# parted /dev/mmcblk0 mkpart primary ext4 193MiB 1217MiB
+# parted /dev/mmcblk0 mkpart primary ext4 257MiB 2305MiB
 
 # mkfs.ext4 /dev/mmcblk0p2
 
-# parted /dev/mmcblk0 mkpart primary ext4 1217MiB 100%
+# parted /dev/mmcblk0 mkpart primary ext4 2305MiB 100%
 
 # mkfs.ext4 /dev/mmcblk0p3
 
@@ -149,11 +150,13 @@ Create mount points for the writable partitions with
 # mkdir /media/mmcblk0p2 /var/lib/docker
 ```
 
-Add the writable partitions to `/etc/fstab`:
+Add the writable partitions with
 
 ```
+# cat >>/etc/fstab <<EOF
 /dev/mmcblk0p2 /media/mmcblk0p2 ext4 defaults 0 0
 /dev/mmcblk0p3 /var/lib/docker ext4 defaults 0 0
+EOF
 ```
 
 Mount the writable partitions with
@@ -174,12 +177,6 @@ Set up the `apk` cache with
 # setup-apkcache /media/mmcblk0p2/cache
 ```
 
-Add an unprivileged user with
-
-```console
-# adduser pihole
-```
-
 Authorize the SSH key with
 
 ```console
@@ -189,23 +186,17 @@ $ mkdir ~/.ssh
 
 $ chmod a=,u=rwx ~/.ssh
 
-$ wget --output-document ~/.ssh/authorized_keys https://git.io/...
+$ wget --output-document ~/.ssh/authorized_keys https://gist.githubusercontent.com/...
 
 $ chmod a=,u=rw ~/.ssh/authorized_keys
 
 $ exit
 ```
 
-Add the authorized keys to the local backup with
-
-```console
-# lbu include /home/pihole/.ssh/authorized_keys
-```
-
-Allow `chronyd` to step the system clock in `/etc/chrony/chrony.conf`:
+Allow `chronyd` to step the system clock with
 
 ```
-makestep 1 -1
+# echo "makestep 1 -1" >>/etc/chrony/chrony.conf
 ```
 
 Install Docker with
@@ -234,25 +225,27 @@ Start Docker with
 # service docker start
 ```
 
-Create a file to hold Pi-hole environment variables with
-
-```console
-# touch /etc/pihole
-
-# chmod u=rw,g=r,o= /etc/pihole
-```
-
-Configure the Pi-hole admin password in `/etc/pihole`:
+Create a file setting the Pi-hole environment variables to
 
 ```
+DNSMASQ_LISTENING=all
 PIHOLE_DNS_=1.1.1.1;1.0.0.1
 WEBPASSWORD=...
 ```
 
-Start Pi-hole with
+with
 
 ```console
-# docker run \
+# vi /etc/pihole
+
+# chmod u=rw,g=r,o= /etc/pihole
+```
+
+Add a script to start Pi-hole with
+
+```console
+# cat >/usr/local/bin/pihole <<EOF
+docker run \
   --detach \
   --dns 127.0.0.1 \
   --dns 1.1.1.1 \
@@ -264,8 +257,20 @@ Start Pi-hole with
   --publish 53:53/tcp \
   --publish 53:53/udp \
   --publish 80:80 \
+  --pull always \
   --restart always \
   pihole/pihole:latest
+EOF
+
+# chmod +x /usr/local/bin/pihole
+
+# lbu include /usr/local/bin/pihole
+```
+
+Start Pi-hole with
+
+```console
+# pihole
 ```
 
 Clear the message of the day with
